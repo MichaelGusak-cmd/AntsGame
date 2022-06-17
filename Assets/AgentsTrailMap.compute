@@ -1,0 +1,142 @@
+#pragma kernel Update
+#pragma kernel ProcessTrailMap
+
+#define PI 3.141592653589793238462
+
+struct Agent {
+    float2 position;
+    float angle;
+};
+
+RWStructuredBuffer<Agent> agents;
+uint numAgents;
+
+RWTexture2D<float4> TrailMap;
+Texture2D<float4> InputTexture;
+
+float moveSpeed;
+float turnSpeed;
+
+float sensorAngleDegrees;
+float sensorOffsetDist;
+float sensorAngleSpacing;
+int sensorSize;
+
+float deltaTime;
+float time;
+
+uint width;
+uint height;
+
+//Hash function www.cs.ubc.ca/~rbridson/docs/schechter-sca08-turbulence.pdf
+uint hash(uint state) {
+    state ^= 2747636419u;
+    state *= 2654435769u;
+    state ^= state >> 16;
+    state *= 2654435769u;
+    state ^= state >> 16;
+    state *= 2654435769u;
+    return state;
+}
+
+float scaleToRange01(float val) {
+    return val / 4294967295.0;
+}
+
+float sense(Agent agent, float sensorAngleOffset) {
+    float sensorAngle = agent.angle + sensorAngleOffset;
+    float2 sensorDir = float2(cos(sensorAngle), sin(sensorAngle));
+    int2 sensorCenter = agent.position + sensorDir * sensorOffsetDist;
+    float sum = 0;
+
+    for (int offsetX = -sensorSize; offsetX <= sensorSize; offsetX++) {
+        for (int offsetY = -sensorSize; offsetY < sensorSize; offsetY++) {
+            int2 pos = sensorCenter + int2(offsetX, offsetY);
+            if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
+                sum += InputTexture[pos].x;
+            }
+        }
+    }
+
+    return sum;
+}
+
+
+[numthreads(16, 1, 1)]
+void Update(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= numAgents) { return; }
+
+    Agent agent = agents[id.x];
+    float2 pos = agent.position;
+
+    uint random = hash(pos.y * width + pos.x + hash(id.x + time * 100000));
+
+    //Steer based on sensory data
+    float weightForward = sense(agent, 0);
+    float weightLeft = sense(agent, sensorAngleSpacing);
+    float weightRight = sense(agent, -sensorAngleSpacing);
+
+    float randomSteerStrength = scaleToRange01(random);
+
+    if (weightForward > weightLeft && weightForward > weightRight) {
+        agents[id.x].angle += 0;
+    }
+    else if (weightForward < weightLeft && weightForward < weightRight) {
+        agents[id.x].angle += (randomSteerStrength - 0.5) * 2.0f * turnSpeed * deltaTime;
+    }
+    else if (weightRight > weightLeft) {
+        agents[id.x].angle -= randomSteerStrength * turnSpeed * deltaTime;
+    }
+    else if (weightRight < weightLeft) {
+        agents[id.x].angle += randomSteerStrength * turnSpeed * deltaTime;
+    }
+
+    //Move agent based on direction and speed
+    float2 direction = float2(cos(agent.angle), sin(agent.angle));
+    float2 newPos = agent.position + direction * moveSpeed * deltaTime;
+
+    //Clamp position to map boundaries, and pick new random move angle if hit boundary
+    if (newPos.x < 0 || newPos.x >= width || newPos.y < 0 || newPos.y >= height) {
+        newPos.x = min(width - 0.01, max(0.1, newPos.x));
+        newPos.y = min(height - 0.01, max(0.1, newPos.y));
+        agents[id.x].angle = scaleToRange01(random) * 2 * PI;
+    }
+
+    // Set new position and draw trail
+    agents[id.x].position = newPos;
+    TrailMap[int2(newPos.x, newPos.y)] = float4(1, 0, 0, 1);
+}
+
+#pragma kernel ProcessTrailMap
+
+float evaporateSpeed;
+float diffuseSpeed;
+
+[numthreads(8, 8, 1)]
+void ProcessTrailMap(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < 0 || id.x >= width || id.y < 0 || id.y >= height) {
+        return;
+    }
+
+    float4 originalValue = InputTexture[id.xy];
+
+    //simple diffusion by 3x3 averaging
+    float4 sum = 0; 
+    for (int offsetX = -1; offsetX <= 1; offsetX++) {
+        for (int offsetY = -1; offsetY <= 1; offsetY++) {
+            int xPos = id.x + offsetX;
+            int yPos = id.y + offsetY;
+
+            if (xPos >= 0 && xPos < width && yPos >= 0 && yPos < height) {
+                sum += InputTexture[int2(xPos, yPos)];
+            }
+        }
+    }
+    float4 blurResult = sum / 9.0f;
+    float4 diffusedValue = lerp(originalValue, blurResult, diffuseSpeed * deltaTime);
+    float4 diffusedAndEvaporatedValue = max(0, diffusedValue - evaporateSpeed * deltaTime);
+
+    TrailMap[id.xy] = diffusedAndEvaporatedValue;
+}
