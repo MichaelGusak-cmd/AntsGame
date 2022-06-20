@@ -324,6 +324,7 @@ MonoBehaviour:
   sensorSize: 1
   evaporateSpeed: 0.5
   diffuseSpeed: 3
+  mouseSpeed: 100
   stepsPerFrame: 1
-  width: 1280
-  height: 720
+  width: 600
+  height: 600

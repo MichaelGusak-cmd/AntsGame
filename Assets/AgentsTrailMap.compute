@@ -1,5 +1,3 @@
-#pragma kernel Update
-#pragma kernel ProcessTrailMap
 
 #define PI 3.141592653589793238462
 
@@ -26,6 +24,7 @@ float deltaTime;
 float time;
 
 uint width;
+int he;
 uint height;
 
 //Hash function www.cs.ubc.ca/~rbridson/docs/schechter-sca08-turbulence.pdf
@@ -61,6 +60,15 @@ float sense(Agent agent, float sensorAngleOffset) {
     return sum;
 }
 
+#pragma kernel Init
+
+[numthreads(8, 8, 1)]
+void Init(uint3 id : SV_DispatchThreadID)
+{
+    TrailMap[id.xy] = float4(0, 0, 0, 1);
+}
+
+#pragma kernel Update
 
 [numthreads(16, 1, 1)]
 void Update(uint3 id : SV_DispatchThreadID)
@@ -121,6 +129,7 @@ void ProcessTrailMap(uint3 id : SV_DispatchThreadID)
     }
 
     float4 originalValue = InputTexture[id.xy];
+    float blue = InputTexture[id.xy].b;
 
     //simple diffusion by 3x3 averaging
     float4 sum = 0; 
@@ -138,5 +147,46 @@ void ProcessTrailMap(uint3 id : SV_DispatchThreadID)
     float4 diffusedValue = lerp(originalValue, blurResult, diffuseSpeed * deltaTime);
     float4 diffusedAndEvaporatedValue = max(0, diffusedValue - evaporateSpeed * deltaTime);
 
+    diffusedAndEvaporatedValue.b = blue;
     TrailMap[id.xy] = diffusedAndEvaporatedValue;
+}
+
+#pragma kernel MousePressed
+
+bool mousePressed;
+float2 mousePos;
+float mouseTime;
+float mouseSpeed;
+
+[numthreads(8, 8, 1)]
+void MousePressed(uint3 id : SV_DispatchThreadID) {
+
+    if (id.x < 0 || id.x >= width || id.y < 0 || id.y >= height || !mousePressed) {
+        return;
+    }
+    float4 originalValue = InputTexture[id.xy];
+
+    float mouseValue = 0;
+    if (mousePressed) {
+        //max dist = (time - mousetime) * mouseSpeed;
+        //current pos dist = length(id.xy - mousePos);
+        //value = lerp(mousePos, dist, currPos)
+        float maxDist = (time - mouseTime) * mouseSpeed;
+        float currDist = length(mousePos - id.xy) / (time - mouseTime);
+        if (currDist < maxDist) {
+            float tVal = currDist / maxDist;
+            //tVal = tVal / 1.5; // (t / 2.0);
+            float lerpVal = lerp(-1.0, 1.0, tVal);
+            lerpVal /= 2;
+            mouseValue = max(0, lerpVal);
+        }
+    }
+
+    float4 finalValue = originalValue;
+    finalValue.r += mouseValue;
+    finalValue.r = min(finalValue.r, 1.0);
+    finalValue.r = max(finalValue.r, 0.0);
+    finalValue.a = 1.0;
+
+    TrailMap[id.xy] = finalValue;
 }

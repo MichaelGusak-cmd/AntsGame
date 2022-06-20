@@ -29,6 +29,8 @@ public class SlimeGPU : MonoBehaviour
 
     public float evaporateSpeed = 0.5f;
     public float diffuseSpeed = 3.0f;
+    public float mouseSpeed = 5.0f;
+
     public int stepsPerFrame = 1;
     public int width = 1280;
     public int height = 720;
@@ -46,6 +48,12 @@ public class SlimeGPU : MonoBehaviour
     //kernel indices
     private int updateIndex;
     private int processIndex;
+    private int mouseIndex;
+    private int initIndex;
+
+    //mouse interaction vars:
+    private Vector3 mousePos;
+    private bool mousePressed = false;
 
     public void AgentsSetup()
     {
@@ -88,18 +96,25 @@ public class SlimeGPU : MonoBehaviour
 
         //Setting the textures, only needs to be done once
         //Textures should be kept on the GPU for performance
+        initIndex = computeShader.FindKernel("Init");
         updateIndex = computeShader.FindKernel("Update");
         processIndex = computeShader.FindKernel("ProcessTrailMap");
+        mouseIndex = computeShader.FindKernel("MousePressed");
 
         computeShader.SetTexture(updateIndex, "InputTexture", texture);
         computeShader.SetTexture(processIndex, "InputTexture", texture);
+        computeShader.SetTexture(mouseIndex, "InputTexture", texture);
 
+        computeShader.SetTexture(initIndex, "TrailMap", trailMap);
         computeShader.SetTexture(updateIndex, "TrailMap", trailMap);
         computeShader.SetTexture(processIndex, "TrailMap", trailMap);
+        computeShader.SetTexture(mouseIndex, "TrailMap", trailMap);
 
         //Constant per creation
         computeShader.SetInt("numAgents", numAgents);
         computeShader.SetBuffer(updateIndex, "agents", agentsBuffer);
+
+        computeShader.SetBool("mousePressed", false); //init
 
         computeShader.SetInt("width", width);
         computeShader.SetInt("height", height);
@@ -116,6 +131,7 @@ public class SlimeGPU : MonoBehaviour
                 BufferSetup();
                 ShaderSetup();
 
+                initTexture();
                 ready = true; //dont set it to false anywhere after this
             }
         }
@@ -130,6 +146,12 @@ public class SlimeGPU : MonoBehaviour
         {
             //runs after first execution of RunSimulation()
         }
+    }
+
+    void initTexture()
+    { 
+        computeShader.Dispatch(initIndex, width / 8, height / 8, 1);
+        Graphics.CopyTexture(trailMap, texture); //Updating the texture input
     }
 
     void FixedUpdate()
@@ -161,19 +183,37 @@ public class SlimeGPU : MonoBehaviour
             computeShader.SetFloat("diffuseSpeed", diffuseSpeed);
             computeShader.SetFloat("evaporateSpeed", evaporateSpeed);
 
+            if (mousePressed)
+            {
+                //Vector2 pos = new Vector2(mousePos.x, mousePos.y);
+
+                computeShader.SetBool("mousePressed", true);
+                computeShader.SetVector("mousePos", new Vector2(mousePos.x, mousePos.y));
+                computeShader.SetFloat("mouseTime", Time.time);
+                computeShader.SetFloat("mouseSpeed", mouseSpeed);
+
+                mousePressed = false;
+            }
+
+
             //Agents Update Compute Shader:
             // Input:  AgentsBuffer, Texture2D Texture
             // Output: RenderTexture TrailMap
-            computeShader.Dispatch(updateIndex, agents.Length / 16, 1, 1);
-
-            //Updating the texture input:
-            Graphics.CopyTexture(trailMap, texture);
+              computeShader.Dispatch(updateIndex, agents.Length / 16, 1, 1);
+              Graphics.CopyTexture(trailMap, texture); //Updating the texture input
 
             //Processing Compute Shader:
             // Input:  Texture2D Texture
             // Output: Texture2D TrailMap
-            computeShader.Dispatch(processIndex, width / 8, height / 8, 1);
+              computeShader.Dispatch(processIndex, width / 8, height / 8, 1);
+              Graphics.CopyTexture(trailMap, texture); //Updating the texture input
 
+            //Mouse Pressed Compute Shader:
+            // Input:  Texture2D Texture
+            // Output: Texture2D TrailMap
+            computeShader.Dispatch(mouseIndex, width / 8, height / 8, 1);
+
+            //=== At the end of the function ===\\
             //Setting trailmap to renderTexture (to prevent tearing)
             Graphics.Blit(trailMap, renderTexture);
 
@@ -188,10 +228,20 @@ public class SlimeGPU : MonoBehaviour
     }
 
 
-
     // Update is called once per frame
     void Update()
     {
+        if (Input.GetMouseButtonDown(0) && !mousePressed && ready)
+        {
+            mousePressed = true; 
+            mousePos = Input.mousePosition;
+
+            //Fix mouse position from screenspace to texture size coords
+            if (Screen.width != width)
+                mousePos.x = (mousePos.x * width) / Screen.width;
+            if (Screen.width != height)
+                mousePos.y = (mousePos.y * height) / Screen.height;
+        }
     }
 
     void OnApplicationQuit()
