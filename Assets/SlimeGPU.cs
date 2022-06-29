@@ -6,17 +6,48 @@ public struct Agent
 {
     public Vector2 position; 
     public float angle; //radians? idk
+    public int species;
+    public int caste;
+    public int emit;
+    public Vector3 smell;
+    public Vector3 reaction;
+    public Vector3 colour;
+}
+
+public struct Queen
+{
+    public Vector2 position;
+    public float angle;
+    public float radius;
+    public int emit;
+    public Vector3 colour;
+}
+
+public struct Pixel
+{
+    public Vector2 position;
+    //values can be stored here as Vector3s,
+    //Vector3 Carbon (Ground, Land, Sky)/(Ground, Water, Sky)
+    //Vector3 Water (Ground, Land, Sky) etc
+    public int value;
+    public float strength;
+    //colour?
 }
 
 public class SlimeGPU : MonoBehaviour
 {
+    private int pixelSizeInBytes = sizeof(float)*3  + sizeof(int)*1;
+    private int agentSizeInBytes = sizeof(float)*12 + sizeof(int)*3; 
+
     public ComputeShader computeShader;
 
     public RenderTexture renderTexture;
     public RenderTexture trailMap;
     private Texture2D texture;
 
-    public int numAgents = 1000;
+    public float zoom = 1.5f;
+
+    public int numAgents = 1000; //multiple of 16 (cuz compute.Update is [16,1,1] threads)
 
     //Default settings seem to look nice
     public float moveSpeed = 50.0f;
@@ -32,14 +63,24 @@ public class SlimeGPU : MonoBehaviour
     public float mouseSpeed = 5.0f;
 
     public int stepsPerFrame = 1;
-    public int width = 1280;
-    public int height = 720;
+    public int width = 1280; //multiple of 8 (cuz compute.ProcessTrailMap is [8,8,1] threads)
+    public int height = 720; //multiple of 8 (cuz compute.ProcessTrailMap is [8,8,1] threads)
 
-    private int bitDepth = 24; //24 or 32, for RenderTexture
+    public float queenRadius = 5.0f;
+    public bool queenPOV = false;
+    private Queen queen;
+
+
+    //Constants
+    private static readonly int[] primes = { 2, 3, 5, 7, 11, 13, 17, 19, 23, 27 };
+    private static readonly int bitDepth = 24; //24 or 32, for RenderTexture
 
     //Objects Lists and their buffers
     private Agent[] agents;
     private ComputeBuffer agentsBuffer;
+
+    private Pixel[] pixels;
+    private ComputeBuffer pixelsBuffer;
 
     //init bools
     private bool ready = false;
@@ -52,8 +93,17 @@ public class SlimeGPU : MonoBehaviour
     private int initIndex;
 
     //mouse interaction vars:
-    private Vector3 mousePos;
+    private Vector2 mousePos;
     private bool mousePressed = false;
+
+    public void QueenSetup()
+    {
+        queen.position = new Vector2(width / 2.0f, height / 2.0f);
+        queen.angle = 0.0f;
+        queen.colour = new Vector3(0.2f, 0.8f, 0.9f);
+        queen.emit = 5;
+        queen.radius = queenRadius;
+    }
 
     public void AgentsSetup()
     {
@@ -64,19 +114,75 @@ public class SlimeGPU : MonoBehaviour
         }
     }
 
+    public void PixelsSetup()
+    {
+        pixels = new Pixel[width * height];
+        for (int i = 0; i < width*height; i++)
+        {
+            CreatePixel(i);
+        }
+    }
+
+    private void CreatePixel(int index)
+    {
+        Pixel pixel = new Pixel();
+        pixel.position = new Vector2(index % width, (int)(index / width));
+        pixel.value = 0;
+        pixel.strength = 0;
+
+        pixels[index] = pixel;
+    }
+
     private void CreateAgent(int index)
     {
         Agent agent = new Agent();
         agent.position = new Vector2(width / 2.0f, height / 2.0f);
         agent.angle = Random.Range(0.0f, 2 * Mathf.PI);
+
+        if (Random.Range(0.0f, 1.0f) < 0.4f) //40% odds
+        {
+            agent.species = 2;
+            agent.caste = 1;
+
+            agent.smell = new Vector3(2, 3, 5); //prime factors
+            agent.reaction = new Vector3(1.0f, -1.0f, -1.0f);
+            agent.emit = 2; //a product of primes for multiple emits(ex: 3*5)
+            agent.colour = new Vector3(1, 0, 0);
+        }
+        else //60% odds
+        {
+            if (Random.Range(0.0f, 1.0f) < 0.5f) //30% odds
+            { 
+                agent.species = 2;
+                agent.caste = 1;
+
+                agent.smell = new Vector3(2, 3, 5); //prime factors
+                agent.reaction = new Vector3(-1.0f, 1.0f, -1.0f);
+                agent.emit = 3; //a product of primes for multiple emits(ex: 3*5)
+                agent.colour = new Vector3(0, 1, 0);
+            }
+            else //30% odds
+            {
+                agent.species = 3;
+                agent.caste = 1;
+
+                agent.smell = new Vector3(2, 3, 5); //prime factors
+                agent.reaction = new Vector3(-1.0f, -1.0f, 1.0f);
+                agent.emit = 5; //a product of primes for multiple emits(ex: 15=3*5)
+                agent.colour = new Vector3(0.0f, 0.75f, 1.0f);
+            }
+        }
         agents[index] = agent;
     }
 
     private void BufferSetup()
     {
-        int size = sizeof(float) * 3; //vector2 = 2 floats, angle = float, total: 3 floats
-        agentsBuffer = new ComputeBuffer(agents.Length, size);
+        //Vectors are collections of floats (Vector2 = 2 floats)
+        agentsBuffer = new ComputeBuffer(agents.Length, agentSizeInBytes);
         agentsBuffer.SetData(agents);
+
+        pixelsBuffer = new ComputeBuffer(pixels.Length, pixelSizeInBytes);
+        pixelsBuffer.SetData(pixels);
     }
 
     private void ShaderSetup()
@@ -113,6 +219,12 @@ public class SlimeGPU : MonoBehaviour
         //Constant per creation
         computeShader.SetInt("numAgents", numAgents);
         computeShader.SetBuffer(updateIndex, "agents", agentsBuffer);
+        computeShader.SetVector("queenColour", queen.colour);
+        computeShader.SetInt("queenEmit", queen.emit);
+
+        computeShader.SetBuffer(updateIndex, "pixels", pixelsBuffer);
+        computeShader.SetBuffer(processIndex, "pixels", pixelsBuffer);
+        computeShader.SetBuffer(mouseIndex, "pixels", pixelsBuffer);
 
         computeShader.SetBool("mousePressed", false); //init
 
@@ -127,7 +239,10 @@ public class SlimeGPU : MonoBehaviour
         {
             if (!ready)
             {
+                QueenSetup();
                 AgentsSetup();
+                PixelsSetup();
+
                 BufferSetup();
                 ShaderSetup();
 
@@ -139,12 +254,20 @@ public class SlimeGPU : MonoBehaviour
         if (Event.current.type.Equals(EventType.Repaint) && executed)
         {
             //Draw renderTexture to screen, there might be a better solution somewhere
-            Graphics.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), renderTexture);
-        }
+            if (queenPOV)
+            {
+                float w = (zoom * Screen.width);
+                float h = (zoom * Screen.height);
 
-        if (executed)
-        {
-            //runs after first execution of RunSimulation()
+                float xPos = ((Screen.width / 2.0f) - (w * queen.position.x) / width);
+                float yPos = (((Screen.height / 2.0f) + (h * queen.position.y) / height) - Screen.height * zoom);
+
+                Graphics.DrawTexture(new Rect(xPos, yPos, w, h), renderTexture);
+            }
+            else
+            {
+                Graphics.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), renderTexture);
+            }
         }
     }
 
@@ -157,11 +280,23 @@ public class SlimeGPU : MonoBehaviour
     void FixedUpdate()
     {
         //simulation subdivisions (remember to reduce values if increasing steps)
-        //more steps will result in more accurate interactions
+        //more steps will result in more interactions at same framerate
         for (int i = 0; i < stepsPerFrame; i++)
         {
+            RunQueen();
             RunSimulation();
         }
+    }
+    void RunQueen()
+    {
+        queen.radius = queenRadius;
+        //Vector2 direction = (getMousePos() - queen.position).normalized;
+        Vector2 direction = new Vector2(0.0f, 0.0f);
+        if (queenPOV)
+            direction = (getMousePos() - new Vector2(width/2.0f, height/2.0f)).normalized;
+        else
+            direction = (getMousePos() - queen.position).normalized;
+        queen.position += direction * moveSpeed * Time.deltaTime;
     }
 
     void RunSimulation()
@@ -184,34 +319,35 @@ public class SlimeGPU : MonoBehaviour
             computeShader.SetFloat("evaporateSpeed", evaporateSpeed);
 
             if (mousePressed)
-            {
-                //Vector2 pos = new Vector2(mousePos.x, mousePos.y);
-
+            { //send mouse info on mouse click (once per click)
                 computeShader.SetBool("mousePressed", true);
-                computeShader.SetVector("mousePos", new Vector2(mousePos.x, mousePos.y));
+                computeShader.SetVector("mousePos", mousePos);
                 computeShader.SetFloat("mouseTime", Time.time);
                 computeShader.SetFloat("mouseSpeed", mouseSpeed);
 
                 mousePressed = false;
             }
 
+            //update queen information:
+            computeShader.SetVector("queenPos", queen.position);
+            computeShader.SetFloat("queenRadius", queen.radius);
 
             //Agents Update Compute Shader:
             // Input:  AgentsBuffer, Texture2D Texture
             // Output: RenderTexture TrailMap
-              computeShader.Dispatch(updateIndex, agents.Length / 16, 1, 1);
-              Graphics.CopyTexture(trailMap, texture); //Updating the texture input
+                computeShader.Dispatch(updateIndex, agents.Length / 16, 1, 1);
+            Graphics.CopyTexture(trailMap, texture); //Updating the texture input
 
             //Processing Compute Shader:
             // Input:  Texture2D Texture
             // Output: Texture2D TrailMap
-              computeShader.Dispatch(processIndex, width / 8, height / 8, 1);
-              Graphics.CopyTexture(trailMap, texture); //Updating the texture input
+                computeShader.Dispatch(processIndex, width / 8, height / 8, 1);
+            //Graphics.CopyTexture(trailMap, texture); //Updating the texture input
 
             //Mouse Pressed Compute Shader:
             // Input:  Texture2D Texture
             // Output: Texture2D TrailMap
-            computeShader.Dispatch(mouseIndex, width / 8, height / 8, 1);
+            //computeShader.Dispatch(mouseIndex, width / 8, height / 8, 1);
 
             //=== At the end of the function ===\\
             //Setting trailmap to renderTexture (to prevent tearing)
@@ -233,19 +369,27 @@ public class SlimeGPU : MonoBehaviour
     {
         if (Input.GetMouseButtonDown(0) && !mousePressed && ready)
         {
-            mousePressed = true; 
-            mousePos = Input.mousePosition;
-
-            //Fix mouse position from screenspace to texture size coords
-            if (Screen.width != width)
-                mousePos.x = (mousePos.x * width) / Screen.width;
-            if (Screen.width != height)
-                mousePos.y = (mousePos.y * height) / Screen.height;
+            mousePressed = true;
+            mousePos = getMousePos(); //Input.mousePosition;
         }
+
+        if (Input.GetKeyDown("space"))
+        {
+            queenPOV = !queenPOV;
+        }
+    }
+
+    Vector2 getMousePos()
+    {
+        Vector3 mouseAt = Input.mousePosition;
+        return new Vector2((mouseAt.x * width) / Screen.width,
+                           (mouseAt.y * height) / Screen.height);
+
     }
 
     void OnApplicationQuit()
     {
         agentsBuffer.Dispose();
+        pixelsBuffer.Dispose();
     }
 }

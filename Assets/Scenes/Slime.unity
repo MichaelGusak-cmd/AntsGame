@@ -315,7 +315,8 @@ MonoBehaviour:
   computeShader: {fileID: 7200000, guid: bb4207d7e57a2b044abb75246724b907, type: 3}
   renderTexture: {fileID: 0}
   trailMap: {fileID: 0}
-  numAgents: 10000
+  zoom: 2
+  numAgents: 50000
   moveSpeed: 50
   turnSpeed: 30
   sensorAngleDegrees: 5
@@ -326,5 +327,6 @@ MonoBehaviour:
   diffuseSpeed: 3
   mouseSpeed: 100
   stepsPerFrame: 1
-  width: 600
-  height: 600
+  width: 904
+  height: 904
+  queenRadius: 10

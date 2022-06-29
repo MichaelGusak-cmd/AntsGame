@@ -2,9 +2,40 @@
 #define PI 3.141592653589793238462
 
 struct Agent {
-    float2 position;
-    float angle;
+    float2 position; //x,y pos
+    float angle; //forward facing angle
+    int species; //species index TODO
+    int caste; //caste index TODO
+
+    int emit;
+    float3 smell;
+    float3 reaction;
+    float3 colour;
 };
+
+struct Pixel {
+    float2 position;
+    int value;
+    float strength;
+};
+
+struct SpeciesSettings {
+    float moveSpeed;
+    float turnSpeed;
+
+    float sensorAngleDegrees;
+    float sensorOffsetDst;
+    int sensorSize;
+    float4 colour;
+};
+
+/*
+struct CasteSettings {
+
+}
+*/
+
+RWStructuredBuffer<Pixel> pixels;
 
 RWStructuredBuffer<Agent> agents;
 uint numAgents;
@@ -24,7 +55,6 @@ float deltaTime;
 float time;
 
 uint width;
-int he;
 uint height;
 
 //Hash function www.cs.ubc.ca/~rbridson/docs/schechter-sca08-turbulence.pdf
@@ -42,6 +72,25 @@ float scaleToRange01(float val) {
     return val / 4294967295.0;
 }
 
+float smell(Agent agent, int2 pos) {
+    int value = pixels[pos.x + width * pos.y].value;
+    float str = pixels[pos.x + width * pos.y].strength;
+    float reaction = 0;
+    int went = 0;
+    if (value > 0) {
+        for (int i = 0; i < 3; i++) {
+            if (agent.smell[i] != 0) {
+                if (value % agent.smell[i] == 0) {
+                    reaction += agent.reaction[i] * str;
+                    went = 1;
+                }
+            }
+        }
+    }
+    //if (went == 1) reaction = str;
+    return reaction; // min(1, max(-1, reaction));
+}
+
 float sense(Agent agent, float sensorAngleOffset) {
     float sensorAngle = agent.angle + sensorAngleOffset;
     float2 sensorDir = float2(cos(sensorAngle), sin(sensorAngle));
@@ -52,7 +101,7 @@ float sense(Agent agent, float sensorAngleOffset) {
         for (int offsetY = -sensorSize; offsetY < sensorSize; offsetY++) {
             int2 pos = sensorCenter + int2(offsetX, offsetY);
             if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
-                sum += InputTexture[pos].x;
+                sum += smell(agent, pos); //InputTexture[pos].x; //
             }
         }
     }
@@ -65,6 +114,10 @@ float sense(Agent agent, float sensorAngleOffset) {
 [numthreads(8, 8, 1)]
 void Init(uint3 id : SV_DispatchThreadID)
 {
+    if (id.x < 0 || id.x > width || id.y < 0 || id.y > height) {
+        return;
+    }
+
     TrailMap[id.xy] = float4(0, 0, 0, 1);
 }
 
@@ -74,6 +127,7 @@ void Init(uint3 id : SV_DispatchThreadID)
 void Update(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= numAgents) { return; }
+    //if (agents[id.x].species == 3) { return; }
 
     Agent agent = agents[id.x];
     float2 pos = agent.position;
@@ -105,15 +159,36 @@ void Update(uint3 id : SV_DispatchThreadID)
     float2 newPos = agent.position + direction * moveSpeed * deltaTime;
 
     //Clamp position to map boundaries, and pick new random move angle if hit boundary
-    if (newPos.x < 0 || newPos.x >= width || newPos.y < 0 || newPos.y >= height) {
-        newPos.x = min(width - 0.01, max(0.1, newPos.x));
-        newPos.y = min(height - 0.01, max(0.1, newPos.y));
+    if (newPos.x < 0 || newPos.x > width || newPos.y < 0 || newPos.y > height) {
+        newPos.x = min(width-1, max(1, newPos.x-1));
+        newPos.y = min(height-1, max(1, newPos.y-1));
+
         agents[id.x].angle = scaleToRange01(random) * 2 * PI;
     }
 
+    int value = pixels[(int)newPos.x + width * (int)newPos.y].value;
+    if (value == 0) value = agent.emit;
+    else if (value % agent.emit!=0) value *= agent.emit;
+
+    if (value > 0) {
+        int4 primes = int4(2, 3, 5, 7);
+        for (int i = 0; i < 4; i++) {
+            if (value % primes[i] == 0 && (value / primes[i]) % primes[i] == 0)
+                value /= primes[i];
+        }
+    }
+
+    pixels[(int)newPos.x + width * (int)newPos.y].value = value;
+    pixels[(int)newPos.x + width * (int)newPos.y].strength = 1;
+
     // Set new position and draw trail
     agents[id.x].position = newPos;
-    TrailMap[int2(newPos.x, newPos.y)] = float4(1, 0, 0, 1);
+
+    //int2 pixelPos = pixels[(int)newPos.x + width * (int)newPos.y]].position
+    
+    TrailMap[int2(newPos.x, newPos.y)] = float4(agent.colour, 1); //Agent Colour
+    //TrailMap[int2(newPos.x, newPos.y)] = float4(weightLeft*weightRight+0.2, weightLeft, weightRight, 1); //Sensing Colours
+    //TrailMap[int2(newPos.x, newPos.y)] = float4(1, direction.x, direction.y, 1); //Direction movement Colours
 }
 
 #pragma kernel ProcessTrailMap
@@ -121,34 +196,59 @@ void Update(uint3 id : SV_DispatchThreadID)
 float evaporateSpeed;
 float diffuseSpeed;
 
+float2 queenPos;
+float queenRadius;
+float3 queenColour;
+int queenEmit;
+
 [numthreads(8, 8, 1)]
 void ProcessTrailMap(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x < 0 || id.x >= width || id.y < 0 || id.y >= height) {
+    if (id.x < 0 || id.x > width+1 || id.y < 0 || id.y > height+1) {
         return;
     }
 
-    float4 originalValue = InputTexture[id.xy];
-    float blue = InputTexture[id.xy].b;
+    if (length(queenPos - id.xy) > queenRadius) {
+        float4 originalValue = InputTexture[id.xy];
+        float orgStr = pixels[id.x + width * id.y].strength;
 
-    //simple diffusion by 3x3 averaging
-    float4 sum = 0; 
-    for (int offsetX = -1; offsetX <= 1; offsetX++) {
-        for (int offsetY = -1; offsetY <= 1; offsetY++) {
-            int xPos = id.x + offsetX;
-            int yPos = id.y + offsetY;
+        //simple diffusion by 3x3 averaging
+        float4 sum = 0;
+        float str = 0;
+        for (int offsetX = -1; offsetX <= 1; offsetX++) {
+            for (int offsetY = -1; offsetY <= 1; offsetY++) {
+                int xPos = id.x + offsetX;
+                int yPos = id.y + offsetY;
 
-            if (xPos >= 0 && xPos < width && yPos >= 0 && yPos < height) {
-                sum += InputTexture[int2(xPos, yPos)];
+                if (xPos >= 0 && xPos < width && yPos >= 0 && yPos < height) {
+                    sum += InputTexture[int2(xPos, yPos)];
+                    str += pixels[xPos + width * yPos].strength;
+                }
             }
         }
-    }
-    float4 blurResult = sum / 9.0f;
-    float4 diffusedValue = lerp(originalValue, blurResult, diffuseSpeed * deltaTime);
-    float4 diffusedAndEvaporatedValue = max(0, diffusedValue - evaporateSpeed * deltaTime);
+        float4 blurResult = sum / 9.0f;
+        float blurStr = str / 9.0f;
 
-    diffusedAndEvaporatedValue.b = blue;
-    TrailMap[id.xy] = diffusedAndEvaporatedValue;
+        float4 diffusedValue = lerp(originalValue, blurResult, diffuseSpeed * deltaTime);
+        float4 diffusedStr = lerp(orgStr, blurStr, diffuseSpeed * deltaTime);
+
+        float4 diffusedAndEvaporatedValue = max(0, diffusedValue - evaporateSpeed * deltaTime);
+        float diffusedAndEvaporatedStr = max(0, diffusedStr - evaporateSpeed * deltaTime);
+
+        diffusedAndEvaporatedValue.a = 1;
+        TrailMap[id.xy] = diffusedAndEvaporatedValue;
+
+        if (diffusedAndEvaporatedStr < 0.3) { //assume its 0
+            pixels[id.x + width * id.y].value = 0; //reset value when strength runs out (pheremones not refreshed anymore)
+            diffusedAndEvaporatedStr = 0;
+        }
+        pixels[id.x + width * id.y].strength = diffusedAndEvaporatedStr;
+    }
+    else {
+        TrailMap[id.xy] = float4(queenColour, 1.0f); 
+        pixels[id.x + width * id.y].value = queenEmit; 
+        pixels[id.x + width * id.y].strength = 1.0f;
+    }
 }
 
 #pragma kernel MousePressed
@@ -161,7 +261,7 @@ float mouseSpeed;
 [numthreads(8, 8, 1)]
 void MousePressed(uint3 id : SV_DispatchThreadID) {
 
-    if (id.x < 0 || id.x >= width || id.y < 0 || id.y >= height || !mousePressed) {
+    if (id.x < 0 || id.x > width || id.y < 0 || id.y > height || !mousePressed) {
         return;
     }
     float4 originalValue = InputTexture[id.xy];
@@ -175,7 +275,6 @@ void MousePressed(uint3 id : SV_DispatchThreadID) {
         float currDist = length(mousePos - id.xy) / (time - mouseTime);
         if (currDist < maxDist) {
             float tVal = currDist / maxDist;
-            //tVal = tVal / 1.5; // (t / 2.0);
             float lerpVal = lerp(-1.0, 1.0, tVal);
             lerpVal /= 2;
             mouseValue = max(0, lerpVal);
@@ -183,10 +282,15 @@ void MousePressed(uint3 id : SV_DispatchThreadID) {
     }
 
     float4 finalValue = originalValue;
-    finalValue.r += mouseValue;
-    finalValue.r = min(finalValue.r, 1.0);
-    finalValue.r = max(finalValue.r, 0.0);
-    finalValue.a = 1.0;
+    finalValue.b += mouseValue;
+    finalValue.b = min(finalValue.b, 1.0);
+    finalValue.b = max(finalValue.b, 0.0);
+    if (finalValue.a < 0.001)
+        finalValue.a = 1.0;
+
+    if (mouseValue > 0.1)
+        pixels[id.x + width * id.y].value = 2;
+    pixels[id.x + width * id.y].strength += mouseValue;
 
     TrailMap[id.xy] = finalValue;
 }
