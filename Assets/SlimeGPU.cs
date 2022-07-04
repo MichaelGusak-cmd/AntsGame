@@ -45,7 +45,7 @@ public class SlimeGPU : MonoBehaviour
     public RenderTexture trailMap;
     private Texture2D texture;
 
-    public float zoom = 1.5f;
+    public float zoom = 4.0f;
 
     public int numAgents = 1000; //multiple of 16 (cuz compute.Update is [16,1,1] threads)
 
@@ -66,8 +66,8 @@ public class SlimeGPU : MonoBehaviour
     public int width = 1280; //multiple of 8 (cuz compute.ProcessTrailMap is [8,8,1] threads)
     public int height = 720; //multiple of 8 (cuz compute.ProcessTrailMap is [8,8,1] threads)
 
-    public float queenRadius = 5.0f;
-    public bool queenPOV = false;
+    public float queenRadius = 3.0f;
+    public bool queenPOV = true;
     private Queen queen;
 
 
@@ -95,6 +95,26 @@ public class SlimeGPU : MonoBehaviour
     //mouse interaction vars:
     private Vector2 mousePos;
     private bool mousePressed = false;
+
+    //Camera vars
+    private bool xCameraClamped;
+    private bool yCameraClamped;
+
+    public void Start()
+    {
+        if (!ready)
+        {
+            QueenSetup();
+            AgentsSetup();
+            PixelsSetup();
+
+            BufferSetup();
+            ShaderSetup();
+
+            initTexture();
+            ready = true; //dont set it to false anywhere after this
+        }
+    }
 
     public void QueenSetup()
     {
@@ -259,8 +279,21 @@ public class SlimeGPU : MonoBehaviour
                 float w = (zoom * Screen.width);
                 float h = (zoom * Screen.height);
 
+                //float xPos = Mathf.Clamp(((Screen.width / 2.0f) - (w * queen.position.x) / width), -Screen.width*(zoom-1), 0.0f);
+                //if (xPos <= -Screen.width * (zoom - 1) + 0.001 || xPos >= -0.001) xCameraClamped = true; else xCameraClamped = false;
                 float xPos = ((Screen.width / 2.0f) - (w * queen.position.x) / width);
-                float yPos = (((Screen.height / 2.0f) + (h * queen.position.y) / height) - Screen.height * zoom);
+                if (xPos > 0.0f) { xPos = 0; xCameraClamped = true; }
+                else if (xPos < -Screen.width * (zoom - 1)) { xPos = -Screen.width * (zoom - 1); xCameraClamped = true; }
+                else xCameraClamped = false;
+
+                //float yPos = Mathf.Clamp((((Screen.height / 2.0f) + (h * queen.position.y) / height) - h), -Screen.height*(zoom-1), 0.0f);
+                //if (yPos <= -Screen.height * (zoom - 1) + 0.001 || yPos >= -0.001) yCameraClamped = true; else yCameraClamped = false;
+                float yPos = (((Screen.height / 2.0f) + (h * queen.position.y) / height) - h);
+                if (yPos > 0.0f) { yPos = 0; yCameraClamped = true; }
+                else if (yPos < -Screen.height * (zoom - 1)) { yPos = -Screen.height * (zoom - 1); yCameraClamped = true; }
+                else yCameraClamped = false;
+
+                //Debug.Log(xPos + ", " + yPos);
 
                 Graphics.DrawTexture(new Rect(xPos, yPos, w, h), renderTexture);
             }
@@ -281,88 +314,95 @@ public class SlimeGPU : MonoBehaviour
     {
         //simulation subdivisions (remember to reduce values if increasing steps)
         //more steps will result in more interactions at same framerate
-        for (int i = 0; i < stepsPerFrame; i++)
+        if (ready) //will only run after init conditions complete
         {
-            RunQueen();
-            RunSimulation();
+            for (int i = 0; i < stepsPerFrame; i++)
+            {
+                RunQueen();
+                RunSimulation();
+            }
         }
     }
     void RunQueen()
     {
         queen.radius = queenRadius;
-        //Vector2 direction = (getMousePos() - queen.position).normalized;
-        Vector2 direction = new Vector2(0.0f, 0.0f);
+
+        Vector2 toMouse = new Vector2(0.0f, 0.0f);
         if (queenPOV)
-            direction = (getMousePos() - new Vector2(width/2.0f, height/2.0f)).normalized;
+        {
+            /*if (xCameraClamped || yCameraClamped)
+            {
+                //screen.height*zoom* queen.position.y) / height
+                float x = Screen.width * zoom * queen.position.x / width;
+                float y = Screen.height * zoom * queen.position.y / height;
+
+                toMouse = (getMousePos() - new Vector2(x, y));
+                Debug.Log("clamped: "+ new Vector2(x,y));
+            }//else if (xCameraClamped && !yCameraClamped)
+            else*/
+                toMouse = (getMousePos() - new Vector2(width / 2.0f, height / 2.0f)) / zoom;
+        }
         else
-            direction = (getMousePos() - queen.position).normalized;
-        queen.position += direction * moveSpeed * Time.deltaTime;
+            toMouse = (getMousePos() - queen.position);
+        if (toMouse.sqrMagnitude > queen.radius*queen.radius) //if mouse further away than the radius
+            queen.position += toMouse.normalized * moveSpeed * Time.deltaTime;
     }
 
     void RunSimulation()
     {
-        if (ready) //will only run after init conditions complete
-        {
-            //Setting the modifiable variables
-            computeShader.SetFloat("deltaTime", Time.deltaTime);
-            computeShader.SetFloat("time", Time.time);
+        //Setting the modifiable variables
+        computeShader.SetFloat("deltaTime", Time.deltaTime);
+        computeShader.SetFloat("time", Time.time);
 
-            computeShader.SetFloat("moveSpeed", moveSpeed);
-            computeShader.SetFloat("turnSpeed", turnSpeed);
+        computeShader.SetFloat("moveSpeed", moveSpeed);
+        computeShader.SetFloat("turnSpeed", turnSpeed);
 
-            computeShader.SetFloat("sensorAngleDegrees", sensorAngleDegrees);
-            computeShader.SetFloat("sensorOffsetDist", sensorOffsetDist);
-            computeShader.SetFloat("sensorAngleSpacing", sensorAngleSpacing);
-            computeShader.SetInt("sensorSize", sensorSize);
+        computeShader.SetFloat("sensorAngleDegrees", sensorAngleDegrees);
+        computeShader.SetFloat("sensorOffsetDist", sensorOffsetDist);
+        computeShader.SetFloat("sensorAngleSpacing", sensorAngleSpacing);
+        computeShader.SetInt("sensorSize", sensorSize);
 
-            computeShader.SetFloat("diffuseSpeed", diffuseSpeed);
-            computeShader.SetFloat("evaporateSpeed", evaporateSpeed);
+        computeShader.SetFloat("diffuseSpeed", diffuseSpeed);
+        computeShader.SetFloat("evaporateSpeed", evaporateSpeed);
 
-            if (mousePressed)
-            { //send mouse info on mouse click (once per click)
-                computeShader.SetBool("mousePressed", true);
-                computeShader.SetVector("mousePos", mousePos);
-                computeShader.SetFloat("mouseTime", Time.time);
-                computeShader.SetFloat("mouseSpeed", mouseSpeed);
+        if (mousePressed)
+        { //send mouse info on mouse click (once per click)
+            computeShader.SetBool("mousePressed", true);
+            computeShader.SetVector("mousePos", mousePos);
+            computeShader.SetFloat("mouseTime", Time.time);
+            computeShader.SetFloat("mouseSpeed", mouseSpeed);
 
-                mousePressed = false;
-            }
-
-            //update queen information:
-            computeShader.SetVector("queenPos", queen.position);
-            computeShader.SetFloat("queenRadius", queen.radius);
-
-            //Agents Update Compute Shader:
-            // Input:  AgentsBuffer, Texture2D Texture
-            // Output: RenderTexture TrailMap
-                computeShader.Dispatch(updateIndex, agents.Length / 16, 1, 1);
-            Graphics.CopyTexture(trailMap, texture); //Updating the texture input
-
-            //Processing Compute Shader:
-            // Input:  Texture2D Texture
-            // Output: Texture2D TrailMap
-                computeShader.Dispatch(processIndex, width / 8, height / 8, 1);
-            //Graphics.CopyTexture(trailMap, texture); //Updating the texture input
-
-            //Mouse Pressed Compute Shader:
-            // Input:  Texture2D Texture
-            // Output: Texture2D TrailMap
-            //computeShader.Dispatch(mouseIndex, width / 8, height / 8, 1);
-
-            //=== At the end of the function ===\\
-            //Setting trailmap to renderTexture (to prevent tearing)
-            Graphics.Blit(trailMap, renderTexture);
-
-            //only important for first loop, so renderer knows it can start drawing
-            executed = true;
+            mousePressed = false;
         }
-    }
 
-    // Start is called before the first frame update
-    void Start()
-    {
-    }
+        //update queen information:
+        computeShader.SetVector("queenPos", queen.position);
+        computeShader.SetFloat("queenRadius", queen.radius);
 
+        //Agents Update Compute Shader:
+        // Input:  AgentsBuffer, Texture2D Texture
+        // Output: RenderTexture TrailMap
+            computeShader.Dispatch(updateIndex, agents.Length / 16, 1, 1);
+        Graphics.CopyTexture(trailMap, texture); //Updating the texture input
+
+        //Processing Compute Shader:
+        // Input:  Texture2D Texture
+        // Output: Texture2D TrailMap
+            computeShader.Dispatch(processIndex, width / 8, height / 8, 1);
+        //Graphics.CopyTexture(trailMap, texture); //Updating the texture input
+
+        //Mouse Pressed Compute Shader:
+        // Input:  Texture2D Texture
+        // Output: Texture2D TrailMap
+        //computeShader.Dispatch(mouseIndex, width / 8, height / 8, 1);
+
+        //=== At the end of the function ===\\
+        //Setting trailmap to renderTexture (to prevent tearing)
+        Graphics.Blit(trailMap, renderTexture);
+
+        //only important for first loop, so renderer knows it can start drawing
+        executed = true;
+    }
 
     // Update is called once per frame
     void Update()
