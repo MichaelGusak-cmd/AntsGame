@@ -100,8 +100,13 @@ public class SlimeGPU : MonoBehaviour
     private bool xCameraClamped;
     private bool yCameraClamped;
 
+    private GameObject sceneManager;
+    private GameObject statTracker;
+
     public void Start()
     {
+        sceneManager = GameObject.FindWithTag("SceneManager");
+        statTracker = GameObject.FindWithTag("StatTracker");
         if (!ready)
         {
             QueenSetup();
@@ -123,6 +128,15 @@ public class SlimeGPU : MonoBehaviour
         queen.colour = new Vector3(0.2f, 0.8f, 0.9f);
         queen.emit = 5;
         queen.radius = queenRadius;
+
+        GetQueenStats();
+    }
+
+    private void GetQueenStats()
+    {
+        Stats s = statTracker.GetComponent<StatTracker>().queenStats;
+        queen.radius = s.values[1]; //1 = radius
+        Debug.Log("Queen Radius: " + queen.radius);
     }
 
     public void AgentsSetup()
@@ -325,7 +339,7 @@ public class SlimeGPU : MonoBehaviour
     }
     void RunQueen()
     {
-        queen.radius = queenRadius;
+        //queen.radius = queenRadius;
 
         Vector2 toMouse = new Vector2(0.0f, 0.0f);
         if (queenPOV)

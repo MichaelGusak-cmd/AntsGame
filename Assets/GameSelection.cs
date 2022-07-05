@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
-//[RequireComponent(typeof(UnityEngine.UI.Button))]
 public class GameSelection : MonoBehaviour
 {
     public int numbuttons = 2; //must be >= 2
@@ -14,13 +13,19 @@ public class GameSelection : MonoBehaviour
     public GameObject buttonPrefab;
 
     private GameObject sceneManager;
+    private GameObject statTracker;
     private List<GameObject> buttons;
     private bool[] toggles;
+    private Stats[] stats;
+    private Stats applyStats;
+
     // Start is called before the first frame update
     void Start()
     {
         mode = 0;
         sceneManager = GameObject.FindWithTag("SceneManager");
+        statTracker = GameObject.FindWithTag("StatTracker");
+        applyStats = new Stats(4); //get current stats
 
         GenerateModeMessage();
         GenerateButtons(numbuttons + 1);
@@ -30,13 +35,24 @@ public class GameSelection : MonoBehaviour
     {
         buttons = new List<GameObject>();
         toggles = new bool[numButtons - 1];
+        stats = new Stats[numButtons - 1];
         for (int i = 0; i < numButtons; i++)
         {
+            Stats stat = new Stats(4); //4 is "num stats implemented"
             if (i > 0)
+            {
                 toggles[i - 1] = false;
+                stat.values[Random.Range(0, stat.numVals)] += Random.Range(3.0f, 5.0f);
+                stat.values[Random.Range(0, stat.numVals)] += Random.Range(-2.0f, -1.0f);
+            }
             var go = (GameObject)Instantiate(buttonPrefab);
             go.transform.SetParent(this.transform, false);
-            go.transform.position = go.transform.position + new Vector3(0, i * 30, 0);
+
+            //resizing buttons: https://forum.unity.com/threads/how-to-make-buttons-resize-to-their-child-text-while-auto-aligning-inside-a-panel.515010/
+            //not implemented, used <Text>.BestFit toggle instead (opposite of resizing button to text)
+            var rect = go.GetComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(Mathf.Clamp(Screen.width/3, 150, 500), Screen.height / numButtons);
+            go.transform.position = new Vector3(Screen.width/2, rect.sizeDelta.y/2 + i * rect.sizeDelta.y, 0);
 
             //Set the button vars/details
             var button = go.GetComponent<Button>(); //button can't be null
@@ -47,7 +63,8 @@ public class GameSelection : MonoBehaviour
                 button.GetComponentInChildren<Text>().text = "Confirm";
             else
             {
-                button.GetComponentInChildren<Text>().text = "Button #" + i;
+                stats[i - 1] = stat;
+                button.GetComponentInChildren<Text>().text = "Button #" + i+"\n"+stat.toString();
             }
             buttons.Add(go); //add button reference to list
         }
@@ -62,6 +79,7 @@ public class GameSelection : MonoBehaviour
     { //the choice has been made, now what
         if (mode < numModes)
         {
+            applyStats.add(stats[n - 1]);
             //STATS
             //  Struct
 
@@ -76,12 +94,14 @@ public class GameSelection : MonoBehaviour
             {
                 Destroy(buttons[i]);
             }
-            GenerateButtons(n + 2);
+            GenerateButtons(Random.Range(6, 9));
         }
         else
         {
             mode = 0;
             //apply choices, then goto game
+            //APPLY(applyStats);
+            statTracker.GetComponent<StatTracker>().queenStats.add(applyStats);
             ChangeToScene("Slime");
         }
     }
