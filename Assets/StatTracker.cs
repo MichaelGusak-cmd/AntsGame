@@ -11,7 +11,7 @@ public struct Stats
     {
         values = new float[n];
         numVals = n;
-        //Stats: { 0=speed, 1=radius, 2=spawnRate, 3=visionRange }
+        //Stats: { 0=speed, 1=radius, 2=spawnLimit, 3=visionRange }
 
         //gurantee the vals are 0 on init
         for (int i = 0; i < numVals; i++)
@@ -31,8 +31,9 @@ public struct Stats
     {
         string[] str = { "Speed: ",
                          "Radius: ",
-                         "Spawn Rate: ",
-                         "Vision Range: " };
+                         "Spawn Limit: ",
+                         "Vision Range: ",
+                         "Respawn Time: "};
 
         string output = "";
         for (int i = 0; i < numVals; i++)
@@ -52,11 +53,12 @@ public struct Stats
 public class StatTracker : MonoBehaviour
 {
     public Stats queenStats;
+    private const int numStats = 5;
     // Start is called before the first frame update
     void Start()
     {
         DontDestroyOnLoad(this.gameObject);
-        queenStats = new Stats(4);
+        queenStats = new Stats(numStats);
     }
 
     // Update is called once per frame

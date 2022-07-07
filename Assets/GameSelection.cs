@@ -19,13 +19,15 @@ public class GameSelection : MonoBehaviour
     private Stats[] stats;
     private Stats applyStats;
 
+    private const int numStats = 5;
+
     // Start is called before the first frame update
     void Start()
     {
         mode = 0;
         sceneManager = GameObject.FindWithTag("SceneManager");
         statTracker = GameObject.FindWithTag("StatTracker");
-        applyStats = new Stats(4); //get current stats
+        applyStats = new Stats(numStats); //get current stats
 
         GenerateModeMessage();
         GenerateButtons(numbuttons + 1);
@@ -38,7 +40,7 @@ public class GameSelection : MonoBehaviour
         stats = new Stats[numButtons - 1];
         for (int i = 0; i < numButtons; i++)
         {
-            Stats stat = new Stats(4); //4 is "num stats implemented"
+            Stats stat = new Stats(numStats);
             if (i > 0)
             {
                 toggles[i - 1] = false;

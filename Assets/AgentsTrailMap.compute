@@ -6,8 +6,11 @@ struct Agent {
     float angle; //forward facing angle
     int species; //species index TODO
     int caste; //caste index TODO
-
     int emit;
+
+    int alive;
+    float respawnTime;
+    
     float3 smell;
     float3 reaction;
     float3 colour;
@@ -54,8 +57,8 @@ int sensorSize;
 float deltaTime;
 float time;
 
-uint width;
-uint height;
+int width;
+int height;
 
 //Hash function www.cs.ubc.ca/~rbridson/docs/schechter-sca08-turbulence.pdf
 uint hash(uint state) {
@@ -123,83 +126,104 @@ void Init(uint3 id : SV_DispatchThreadID)
 
 #pragma kernel Update
 
+int queenSpawnLimit;
+int maxSpawnLimit;
+
+float2 queenPos;
+float queenRadius;
+float3 queenColour;
+int queenEmit;
+float queenRespawnTimer;
+
+
 [numthreads(16, 1, 1)]
 void Update(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= numAgents) { return; }
-    //if (agents[id.x].species == 3) { return; }
 
-    Agent agent = agents[id.x];
-    float2 pos = agent.position;
+    if (id.x < (uint)queenSpawnLimit || agents[id.x].species != 1)
+    {
+        Agent agent = agents[id.x];
+        
+        if (agent.alive != 0) { //if (agent.alive is not false)
+            float2 pos = agent.position;
 
-    uint random = hash(pos.y * width + pos.x + hash(id.x + time * 100000));
+            uint random = hash(pos.y * width + pos.x + hash(id.x + time * 100000));
 
-    //Steer based on sensory data
-    float weightForward = sense(agent, 0);
-    float weightLeft = sense(agent, sensorAngleSpacing);
-    float weightRight = sense(agent, -sensorAngleSpacing);
+            //Steer based on sensory data
+            float weightForward = sense(agent, 0);
+            float weightLeft = sense(agent, sensorAngleSpacing);
+            float weightRight = sense(agent, -sensorAngleSpacing);
 
-    float randomSteerStrength = scaleToRange01(random);
+            float randomSteerStrength = scaleToRange01(random);
 
-    if (weightForward > weightLeft && weightForward > weightRight) {
-        agents[id.x].angle += 0;
-    }
-    else if (weightForward < weightLeft && weightForward < weightRight) {
-        agents[id.x].angle += (randomSteerStrength - 0.5) * 2.0f * turnSpeed * deltaTime;
-    }
-    else if (weightRight > weightLeft) {
-        agents[id.x].angle -= randomSteerStrength * turnSpeed * deltaTime;
-    }
-    else if (weightRight < weightLeft) {
-        agents[id.x].angle += randomSteerStrength * turnSpeed * deltaTime;
-    }
+            if (weightForward > weightLeft && weightForward > weightRight) {
+                agents[id.x].angle += 0;
+            }
+            else if (weightForward < weightLeft && weightForward < weightRight) {
+                agents[id.x].angle += (randomSteerStrength - 0.5) * 2.0f * turnSpeed * deltaTime;
+            }
+            else if (weightRight > weightLeft) {
+                agents[id.x].angle -= randomSteerStrength * turnSpeed * deltaTime;
+            }
+            else if (weightRight < weightLeft) {
+                agents[id.x].angle += randomSteerStrength * turnSpeed * deltaTime;
+            }
 
-    //Move agent based on direction and speed
-    float2 direction = float2(cos(agent.angle), sin(agent.angle));
-    float2 newPos = agent.position + direction * moveSpeed * deltaTime;
+            //Move agent based on direction and speed
+            float2 direction = float2(cos(agent.angle), sin(agent.angle));
+            float2 newPos = agent.position + direction * moveSpeed * deltaTime;
 
-    //Clamp position to map boundaries, and pick new random move angle if hit boundary
-    if (newPos.x < 0 || newPos.x > width || newPos.y < 0 || newPos.y > height) {
-        newPos.x = min(width-1, max(1, newPos.x-1));
-        newPos.y = min(height-1, max(1, newPos.y-1));
+            //Clamp position to map boundaries, and pick new random move angle if hit boundary
+            if (newPos.x < 0 || newPos.x > width || newPos.y < 0 || newPos.y > height) {
+                newPos.x = min(width - 1, max(1, newPos.x - 1));
+                newPos.y = min(height - 1, max(1, newPos.y - 1));
 
-        agents[id.x].angle = scaleToRange01(random) * 2 * PI;
-    }
+                agents[id.x].angle = scaleToRange01(random) * 2 * PI;
+            }
 
-    int value = pixels[(int)newPos.x + width * (int)newPos.y].value;
-    if (value == 0) value = agent.emit;
-    else if (value % agent.emit!=0) value *= agent.emit;
+            int value = pixels[(int)newPos.x + width * (int)newPos.y].value;
+            if (value == 0) value = agent.emit;
+            else if (value % agent.emit != 0) value *= agent.emit;
 
-    if (value > 0) {
-        int4 primes = int4(2, 3, 5, 7);
-        for (int i = 0; i < 4; i++) {
-            if (value % primes[i] == 0 && (value / primes[i]) % primes[i] == 0)
-                value /= primes[i];
+            if (value > 0) {
+                int4 primes = int4(2, 3, 5, 7);
+                for (int i = 0; i < 4; i++) {
+                    if (value % primes[i] == 0 && (value / primes[i]) % primes[i] == 0)
+                        value /= primes[i];
+                }
+            }
+
+            pixels[(int)newPos.x + width * (int)newPos.y].value = value;
+            pixels[(int)newPos.x + width * (int)newPos.y].strength = 1;
+
+            // Set new position and draw trail
+            agents[id.x].position = newPos;
+
+            //int2 pixelPos = pixels[(int)newPos.x + width * (int)newPos.y]].position
+
+            TrailMap[int2(newPos.x, newPos.y)] = float4(agent.colour, 1); //Agent Colour
+            //TrailMap[int2(newPos.x, newPos.y)] = float4(weightLeft*weightRight+0.2, weightLeft, weightRight, 1); //Sensing Colours
+            //TrailMap[int2(newPos.x, newPos.y)] = float4(1, direction.x, direction.y, 1); //Direction movement Colours
+        }
+        else if (id.x < queenSpawnLimit) { //(id.x < queenSpawnLimit && id.x < maxSpawnLimit)
+            agents[id.x].respawnTime = agents[id.x].respawnTime - deltaTime;
+            if (agents[id.x].respawnTime <= 0) {
+                agents[id.x].alive = 1;
+                agents[id.x].position = queenPos;
+            }
+        }
+
+        if (id.x > queenSpawnLimit && id.x < maxSpawnLimit) {
+            agents[id.x].colour = float3(1, 1, 1);
         }
     }
-
-    pixels[(int)newPos.x + width * (int)newPos.y].value = value;
-    pixels[(int)newPos.x + width * (int)newPos.y].strength = 1;
-
-    // Set new position and draw trail
-    agents[id.x].position = newPos;
-
-    //int2 pixelPos = pixels[(int)newPos.x + width * (int)newPos.y]].position
-    
-    TrailMap[int2(newPos.x, newPos.y)] = float4(agent.colour, 1); //Agent Colour
-    //TrailMap[int2(newPos.x, newPos.y)] = float4(weightLeft*weightRight+0.2, weightLeft, weightRight, 1); //Sensing Colours
-    //TrailMap[int2(newPos.x, newPos.y)] = float4(1, direction.x, direction.y, 1); //Direction movement Colours
 }
 
 #pragma kernel ProcessTrailMap
 
 float evaporateSpeed;
 float diffuseSpeed;
-
-float2 queenPos;
-float queenRadius;
-float3 queenColour;
-int queenEmit;
 
 [numthreads(8, 8, 1)]
 void ProcessTrailMap(uint3 id : SV_DispatchThreadID)
@@ -233,7 +257,7 @@ void ProcessTrailMap(uint3 id : SV_DispatchThreadID)
         float4 diffusedStr = lerp(orgStr, blurStr, diffuseSpeed * deltaTime);
 
         float4 diffusedAndEvaporatedValue = max(0, diffusedValue - evaporateSpeed * deltaTime);
-        float diffusedAndEvaporatedStr = max(0, diffusedStr - evaporateSpeed * deltaTime);
+        float diffusedAndEvaporatedStr = max(0, diffusedStr - evaporateSpeed * deltaTime)[0];
 
         diffusedAndEvaporatedValue.a = 1;
         TrailMap[id.xy] = diffusedAndEvaporatedValue;

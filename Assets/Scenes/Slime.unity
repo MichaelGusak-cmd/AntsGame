@@ -317,6 +317,8 @@ MonoBehaviour:
   trailMap: {fileID: 0}
   zoom: 3
   numAgents: 10000
+  maxPlayerAgents: 3333
+  defaultRespawnTimer: 0.01
   moveSpeed: 50
   turnSpeed: 30
   sensorAngleDegrees: 5
@@ -330,4 +332,5 @@ MonoBehaviour:
   width: 1096
   height: 1096
   queenRadius: 10
+  queenSpawnLimit: 10
   queenPOV: 1

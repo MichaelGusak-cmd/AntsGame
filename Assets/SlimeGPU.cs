@@ -9,6 +9,10 @@ public struct Agent
     public int species;
     public int caste;
     public int emit;
+
+    public int alive; //boolean, 0 = false, anything else is true
+    public float respawnTime;
+
     public Vector3 smell;
     public Vector3 reaction;
     public Vector3 colour;
@@ -17,8 +21,11 @@ public struct Agent
 public struct Queen
 {
     public Vector2 position;
-    public float angle;
+    public float angle; //can be ignored
     public float radius;
+    public float speed; //larger = faster
+    public int spawnLimit; //larger = more player agents
+    public float respawnTimer; //larger = slower agent spawns
     public int emit;
     public Vector3 colour;
 }
@@ -37,7 +44,7 @@ public struct Pixel
 public class SlimeGPU : MonoBehaviour
 {
     private int pixelSizeInBytes = sizeof(float)*3  + sizeof(int)*1;
-    private int agentSizeInBytes = sizeof(float)*12 + sizeof(int)*3; 
+    private int agentSizeInBytes = sizeof(float)*13 + sizeof(int)*4; 
 
     public ComputeShader computeShader;
 
@@ -47,7 +54,9 @@ public class SlimeGPU : MonoBehaviour
 
     public float zoom = 4.0f;
 
-    public int numAgents = 1000; //multiple of 16 (cuz compute.Update is [16,1,1] threads)
+    public int numAgents = 1000; //total num agents, multiple of 16 (cuz compute.Update is [16,1,1] threads)
+    public int maxPlayerAgents = 500; //num player agents out of the total num
+    public float defaultRespawnTimer = 250.0f;
 
     //Default settings seem to look nice
     public float moveSpeed = 50.0f;
@@ -67,6 +76,7 @@ public class SlimeGPU : MonoBehaviour
     public int height = 720; //multiple of 8 (cuz compute.ProcessTrailMap is [8,8,1] threads)
 
     public float queenRadius = 3.0f;
+    public int queenSpawnLimit = 50;
     public bool queenPOV = true;
     private Queen queen;
 
@@ -96,10 +106,6 @@ public class SlimeGPU : MonoBehaviour
     private Vector2 mousePos;
     private bool mousePressed = false;
 
-    //Camera vars
-    private bool xCameraClamped;
-    private bool yCameraClamped;
-
     private GameObject sceneManager;
     private GameObject statTracker;
 
@@ -123,11 +129,15 @@ public class SlimeGPU : MonoBehaviour
 
     public void QueenSetup()
     {
+        //defaults
         queen.position = new Vector2(width / 2.0f, height / 2.0f);
         queen.angle = 0.0f;
         queen.colour = new Vector3(0.2f, 0.8f, 0.9f);
-        queen.emit = 5;
+        queen.emit = 2;
         queen.radius = queenRadius;
+        queen.spawnLimit = queenSpawnLimit;
+        queen.respawnTimer = defaultRespawnTimer;
+        queen.speed = 30;
 
         GetQueenStats();
     }
@@ -135,8 +145,12 @@ public class SlimeGPU : MonoBehaviour
     private void GetQueenStats()
     {
         Stats s = statTracker.GetComponent<StatTracker>().queenStats;
-        queen.radius = s.values[1]; //1 = radius
-        Debug.Log("Queen Radius: " + queen.radius);
+        //clamp values are arbitrary
+        queen.speed =       Mathf.Clamp(s.values[0], 0.0f, 100.0f); //0 = speed
+        queen.radius =      Mathf.Clamp(s.values[1], 1.0f, 100.0f); //1 = radius
+        queen.spawnLimit =  50 + (int)Mathf.Clamp(s.values[2], 0.0f, numAgents-50); //2 = spawn Limit
+        zoom =              2.0f + Mathf.Clamp(s.values[3], 1.0f, 10.0f);  //3 = vision range
+        queen.respawnTimer = Mathf.Clamp(s.values[4], 0.0f, 1.0f); //4 = agent respawn timer
     }
 
     public void AgentsSetup()
@@ -166,47 +180,79 @@ public class SlimeGPU : MonoBehaviour
 
         pixels[index] = pixel;
     }
-
     private void CreateAgent(int index)
     {
         Agent agent = new Agent();
         agent.position = new Vector2(width / 2.0f, height / 2.0f);
         agent.angle = Random.Range(0.0f, 2 * Mathf.PI);
 
-        if (Random.Range(0.0f, 1.0f) < 0.4f) //40% odds
+        //TEMP commons for all (for now, prob)
+        agent.smell = new Vector3(2, 3, 5);
+        agent.caste = 1;
+
+        //init player agents
+        if (index < maxPlayerAgents)
+        { //init player agent, spawned = false, respawn timer * index
+            agent.species = 1;
+            agent.emit = 2;
+            agent.reaction = new Vector3(1.0f, -1.0f, -1.0f);
+            agent.colour = new Vector3(0.0f, 0.75f, 1.0f);
+            agent.alive = 0; //false
+            agent.respawnTime = index * queen.respawnTimer;
+        }
+        else if (Random.Range(0.0f, 1.0f) < 0.5f) //50% odds for red agents
         {
             agent.species = 2;
-            agent.caste = 1;
-
-            agent.smell = new Vector3(2, 3, 5); //prime factors
-            agent.reaction = new Vector3(1.0f, -1.0f, -1.0f);
-            agent.emit = 2; //a product of primes for multiple emits(ex: 3*5)
+            agent.emit = 3; //a product of primes for multiple emits(ex: 3*5)
+            agent.reaction = new Vector3(-1.0f, 1.0f, -1.0f);
             agent.colour = new Vector3(1, 0, 0);
+            agent.alive = 1; //true
+            agent.respawnTime = index * 0.4f; //some respawn time
         }
-        else //60% odds
+        else
         {
-            if (Random.Range(0.0f, 1.0f) < 0.5f) //30% odds
-            { 
+            agent.species = 3;
+            agent.emit = 5; //a product of primes for multiple emits(ex: 3*5)
+            agent.reaction = new Vector3(-1.0f, -1.0f, 1.0f);
+            agent.colour = new Vector3(0, 1, 0);
+            agent.alive = 1; //true
+            agent.respawnTime = index * 0.6f; //some respawn time
+        }
+            /*
+            if (Random.Range(0.0f, 1.0f) < 0.4f) //40% odds
+            {
                 agent.species = 2;
                 agent.caste = 1;
 
                 agent.smell = new Vector3(2, 3, 5); //prime factors
-                agent.reaction = new Vector3(-1.0f, 1.0f, -1.0f);
-                agent.emit = 3; //a product of primes for multiple emits(ex: 3*5)
-                agent.colour = new Vector3(0, 1, 0);
+                agent.reaction = new Vector3(1.0f, -1.0f, -1.0f);
+                agent.emit = 2; //a product of primes for multiple emits(ex: 3*5)
+                agent.colour = new Vector3(1, 0, 0);
             }
-            else //30% odds
+            else //60% odds
             {
-                agent.species = 3;
-                agent.caste = 1;
+                if (Random.Range(0.0f, 1.0f) < 0.5f) //30% odds
+                { 
+                    agent.species = 2;
+                    agent.caste = 1;
 
-                agent.smell = new Vector3(2, 3, 5); //prime factors
-                agent.reaction = new Vector3(-1.0f, -1.0f, 1.0f);
-                agent.emit = 5; //a product of primes for multiple emits(ex: 15=3*5)
-                agent.colour = new Vector3(0.0f, 0.75f, 1.0f);
-            }
-        }
-        agents[index] = agent;
+                    agent.smell = new Vector3(2, 3, 5); //prime factors
+                    agent.reaction = new Vector3(-1.0f, 1.0f, -1.0f);
+                    agent.emit = 3; //a product of primes for multiple emits(ex: 3*5)
+                    agent.colour = new Vector3(0, 1, 0);
+                }
+                else //30% odds
+                {
+                    agent.species = 3;
+                    agent.caste = 1;
+
+                    agent.smell = new Vector3(2, 3, 5); //prime factors
+                    agent.reaction = new Vector3(-1.0f, -1.0f, 1.0f);
+                    agent.emit = 5; //a product of primes for multiple emits(ex: 15=3*5)
+                    agent.colour = new Vector3(0.0f, 0.75f, 1.0f);
+                }
+            }*/
+            agents[index] = agent;
     }
 
     private void BufferSetup()
@@ -252,6 +298,7 @@ public class SlimeGPU : MonoBehaviour
 
         //Constant per creation
         computeShader.SetInt("numAgents", numAgents);
+        computeShader.SetInt("maxSpawnLimit", maxPlayerAgents);
         computeShader.SetBuffer(updateIndex, "agents", agentsBuffer);
         computeShader.SetVector("queenColour", queen.colour);
         computeShader.SetInt("queenEmit", queen.emit);
@@ -293,19 +340,19 @@ public class SlimeGPU : MonoBehaviour
                 float w = (zoom * Screen.width);
                 float h = (zoom * Screen.height);
 
-                //float xPos = Mathf.Clamp(((Screen.width / 2.0f) - (w * queen.position.x) / width), -Screen.width*(zoom-1), 0.0f);
+                float xPos = Mathf.Clamp(((Screen.width / 2.0f) - (w * queen.position.x) / width), -Screen.width*(zoom-1), 0.0f);
                 //if (xPos <= -Screen.width * (zoom - 1) + 0.001 || xPos >= -0.001) xCameraClamped = true; else xCameraClamped = false;
-                float xPos = ((Screen.width / 2.0f) - (w * queen.position.x) / width);
-                if (xPos > 0.0f) { xPos = 0; xCameraClamped = true; }
-                else if (xPos < -Screen.width * (zoom - 1)) { xPos = -Screen.width * (zoom - 1); xCameraClamped = true; }
-                else xCameraClamped = false;
+                //float xPos = ((Screen.width / 2.0f) - (w * queen.position.x) / width);
+                //if (xPos > 0.0f) { xPos = 0; xCameraClamped = true; }
+                //else if (xPos < -Screen.width * (zoom - 1)) { xPos = -Screen.width * (zoom - 1); xCameraClamped = true; }
+                //else xCameraClamped = false;
 
-                //float yPos = Mathf.Clamp((((Screen.height / 2.0f) + (h * queen.position.y) / height) - h), -Screen.height*(zoom-1), 0.0f);
+                float yPos = Mathf.Clamp((((Screen.height / 2.0f) + (h * queen.position.y) / height) - h), -Screen.height*(zoom-1), 0.0f);
                 //if (yPos <= -Screen.height * (zoom - 1) + 0.001 || yPos >= -0.001) yCameraClamped = true; else yCameraClamped = false;
-                float yPos = (((Screen.height / 2.0f) + (h * queen.position.y) / height) - h);
-                if (yPos > 0.0f) { yPos = 0; yCameraClamped = true; }
-                else if (yPos < -Screen.height * (zoom - 1)) { yPos = -Screen.height * (zoom - 1); yCameraClamped = true; }
-                else yCameraClamped = false;
+                //float yPos = (((Screen.height / 2.0f) + (h * queen.position.y) / height) - h);
+                //if (yPos > 0.0f) { yPos = 0; yCameraClamped = true; }
+                //else if (yPos < -Screen.height * (zoom - 1)) { yPos = -Screen.height * (zoom - 1); yCameraClamped = true; }
+                //else yCameraClamped = false;
 
                 //Debug.Log(xPos + ", " + yPos);
 
@@ -359,7 +406,7 @@ public class SlimeGPU : MonoBehaviour
         else
             toMouse = (getMousePos() - queen.position);
         if (toMouse.sqrMagnitude > queen.radius*queen.radius) //if mouse further away than the radius
-            queen.position += toMouse.normalized * moveSpeed * Time.deltaTime;
+            queen.position += toMouse.normalized * queen.speed * Time.deltaTime;
     }
 
     void RunSimulation()
@@ -392,11 +439,13 @@ public class SlimeGPU : MonoBehaviour
         //update queen information:
         computeShader.SetVector("queenPos", queen.position);
         computeShader.SetFloat("queenRadius", queen.radius);
+        computeShader.SetInt("queenSpawnLimit", queen.spawnLimit);
+        computeShader.SetFloat("queenRespawnTimer", queen.respawnTimer);
 
         //Agents Update Compute Shader:
         // Input:  AgentsBuffer, Texture2D Texture
         // Output: RenderTexture TrailMap
-            computeShader.Dispatch(updateIndex, agents.Length / 16, 1, 1);
+        computeShader.Dispatch(updateIndex, agents.Length / 16, 1, 1);
         Graphics.CopyTexture(trailMap, texture); //Updating the texture input
 
         //Processing Compute Shader:
@@ -430,6 +479,10 @@ public class SlimeGPU : MonoBehaviour
         if (Input.GetKeyDown("space"))
         {
             queenPOV = !queenPOV;
+        }
+        if (Input.GetKeyDown("q"))
+        { //consider this a round 'win' 
+            sceneManager.GetComponent<SceneChanger>().ChangeScene("GameSettings");
         }
     }
 
