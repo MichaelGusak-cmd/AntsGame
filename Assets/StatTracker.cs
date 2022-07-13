@@ -11,19 +11,31 @@ public struct Stats
     {
         values = new float[n];
         numVals = n;
-        //Stats: { 0=speed, 1=radius, 2=spawnLimit, 3=visionRange }
+        //Stats: { 0=speed, 1=radius, 2=spawnLimit, 3=visionRange, 4=RespawnTime }
 
         //gurantee the vals are 0 on init
         for (int i = 0; i < numVals; i++)
             values[i] = 0;
     }
 
-    public void add(Stats s)
+    public void add(Stats s, bool clamp)
     {
         for (int i = 0; i < numVals; i++)
         {
             float val = s.values[i];
             values[i] += val;
+            if (clamp)
+                values[i] = Mathf.Clamp(values[i], 0, 1000);
+                
+            //}
+        }
+    }
+
+    public void set(Stats s)
+    {
+        for (int i = 0; i < numVals; i++)
+        {
+            values[i] = s.values[i];
         }
     }
 
@@ -37,28 +49,34 @@ public struct Stats
 
         string output = "";
         for (int i = 0; i < numVals; i++)
-            output += formatString(str[i], values[i]);
+            output += formatString(str[i], values[i], true) + "\n";
 
         return output;
     }
 
-    private string formatString(string str, float val)
+    public string formatString(string str, float val, bool nullString)
     {
-        if (val > 0.01) str += "+" + val.ToString("0.0") + "\n";
-        else if (val < -0.01) str += val.ToString("0.0") + "\n";
-        else str = "";
+        if (val > 0.01) str += "+" + val.ToString("0.00");
+        else if (val < -0.01) str += val.ToString("0.00");
+        else if (nullString) str = "";
         return str;
     }
 }
 public class StatTracker : MonoBehaviour
 {
     public Stats queenStats;
+    public Stats tempStats;
+    public int winCon;
+    public bool[] tempBool;
     private const int numStats = 5;
     // Start is called before the first frame update
     void Start()
     {
         DontDestroyOnLoad(this.gameObject);
         queenStats = new Stats(numStats);
+        tempStats = new Stats(numStats);
+        tempBool = new bool[numStats];
+        winCon = -1;
     }
 
     // Update is called once per frame

@@ -329,8 +329,8 @@ MonoBehaviour:
   diffuseSpeed: 3
   mouseSpeed: 100
   stepsPerFrame: 1
-  width: 1096
-  height: 1096
+  width: 400
+  height: 400
   queenRadius: 10
   queenSpawnLimit: 10
   queenPOV: 1

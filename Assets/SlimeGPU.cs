@@ -28,6 +28,7 @@ public struct Queen
     public float respawnTimer; //larger = slower agent spawns
     public int emit;
     public Vector3 colour;
+    public int winCon;
 }
 
 public struct Pixel
@@ -113,6 +114,11 @@ public class SlimeGPU : MonoBehaviour
     {
         sceneManager = GameObject.FindWithTag("SceneManager");
         statTracker = GameObject.FindWithTag("StatTracker");
+
+        float aspectRatio = Screen.width / (float)Screen.height;
+        //height = 1096;
+        //width = (int)(height * aspectRatio);
+
         if (!ready)
         {
             QueenSetup();
@@ -130,7 +136,7 @@ public class SlimeGPU : MonoBehaviour
     public void QueenSetup()
     {
         //defaults
-        queen.position = new Vector2(width / 2.0f, height / 2.0f);
+        queen.position = new Vector2(0, 0);//new Vector2(width / 2.0f, height / 2.0f);
         queen.angle = 0.0f;
         queen.colour = new Vector3(0.2f, 0.8f, 0.9f);
         queen.emit = 2;
@@ -144,13 +150,30 @@ public class SlimeGPU : MonoBehaviour
 
     private void GetQueenStats()
     {
-        Stats s = statTracker.GetComponent<StatTracker>().queenStats;
+        StatTracker tracker = statTracker.GetComponent<StatTracker>();
+        Stats queenS = tracker.queenStats;
+        Stats tempS = tracker.tempStats;
+
+        Stats s = new Stats(queenS.numVals);
+        s.add(queenS,true);
+        s.add(tempS, true);
+
+        bool[] tempBool = tracker.tempBool;
+        for (int i = 0; i < s.numVals; i++)
+        {
+            if (tempBool[i])
+                s.values[i] = tempS.values[i];
+        }
+
         //clamp values are arbitrary
-        queen.speed =       Mathf.Clamp(s.values[0], 0.0f, 100.0f); //0 = speed
+        queen.speed =       40 + Mathf.Clamp(s.values[0], -40.0f, 100.0f); //0 = speed
         queen.radius =      Mathf.Clamp(s.values[1], 1.0f, 100.0f); //1 = radius
         queen.spawnLimit =  50 + (int)Mathf.Clamp(s.values[2], 0.0f, numAgents-50); //2 = spawn Limit
         zoom =              2.0f + Mathf.Clamp(s.values[3], 1.0f, 10.0f);  //3 = vision range
         queen.respawnTimer = Mathf.Clamp(s.values[4], 0.0f, 1.0f); //4 = agent respawn timer
+
+
+        queen.winCon = statTracker.GetComponent<StatTracker>().winCon;
     }
 
     public void AgentsSetup()
@@ -218,41 +241,7 @@ public class SlimeGPU : MonoBehaviour
             agent.alive = 1; //true
             agent.respawnTime = index * 0.6f; //some respawn time
         }
-            /*
-            if (Random.Range(0.0f, 1.0f) < 0.4f) //40% odds
-            {
-                agent.species = 2;
-                agent.caste = 1;
-
-                agent.smell = new Vector3(2, 3, 5); //prime factors
-                agent.reaction = new Vector3(1.0f, -1.0f, -1.0f);
-                agent.emit = 2; //a product of primes for multiple emits(ex: 3*5)
-                agent.colour = new Vector3(1, 0, 0);
-            }
-            else //60% odds
-            {
-                if (Random.Range(0.0f, 1.0f) < 0.5f) //30% odds
-                { 
-                    agent.species = 2;
-                    agent.caste = 1;
-
-                    agent.smell = new Vector3(2, 3, 5); //prime factors
-                    agent.reaction = new Vector3(-1.0f, 1.0f, -1.0f);
-                    agent.emit = 3; //a product of primes for multiple emits(ex: 3*5)
-                    agent.colour = new Vector3(0, 1, 0);
-                }
-                else //30% odds
-                {
-                    agent.species = 3;
-                    agent.caste = 1;
-
-                    agent.smell = new Vector3(2, 3, 5); //prime factors
-                    agent.reaction = new Vector3(-1.0f, -1.0f, 1.0f);
-                    agent.emit = 5; //a product of primes for multiple emits(ex: 15=3*5)
-                    agent.colour = new Vector3(0.0f, 0.75f, 1.0f);
-                }
-            }*/
-            agents[index] = agent;
+        agents[index] = agent;
     }
 
     private void BufferSetup()
@@ -302,6 +291,7 @@ public class SlimeGPU : MonoBehaviour
         computeShader.SetBuffer(updateIndex, "agents", agentsBuffer);
         computeShader.SetVector("queenColour", queen.colour);
         computeShader.SetInt("queenEmit", queen.emit);
+        computeShader.SetInt("winCon", queen.winCon);
 
         computeShader.SetBuffer(updateIndex, "pixels", pixelsBuffer);
         computeShader.SetBuffer(processIndex, "pixels", pixelsBuffer);
@@ -341,18 +331,7 @@ public class SlimeGPU : MonoBehaviour
                 float h = (zoom * Screen.height);
 
                 float xPos = Mathf.Clamp(((Screen.width / 2.0f) - (w * queen.position.x) / width), -Screen.width*(zoom-1), 0.0f);
-                //if (xPos <= -Screen.width * (zoom - 1) + 0.001 || xPos >= -0.001) xCameraClamped = true; else xCameraClamped = false;
-                //float xPos = ((Screen.width / 2.0f) - (w * queen.position.x) / width);
-                //if (xPos > 0.0f) { xPos = 0; xCameraClamped = true; }
-                //else if (xPos < -Screen.width * (zoom - 1)) { xPos = -Screen.width * (zoom - 1); xCameraClamped = true; }
-                //else xCameraClamped = false;
-
                 float yPos = Mathf.Clamp((((Screen.height / 2.0f) + (h * queen.position.y) / height) - h), -Screen.height*(zoom-1), 0.0f);
-                //if (yPos <= -Screen.height * (zoom - 1) + 0.001 || yPos >= -0.001) yCameraClamped = true; else yCameraClamped = false;
-                //float yPos = (((Screen.height / 2.0f) + (h * queen.position.y) / height) - h);
-                //if (yPos > 0.0f) { yPos = 0; yCameraClamped = true; }
-                //else if (yPos < -Screen.height * (zoom - 1)) { yPos = -Screen.height * (zoom - 1); yCameraClamped = true; }
-                //else yCameraClamped = false;
 
                 //Debug.Log(xPos + ", " + yPos);
 
@@ -391,21 +370,11 @@ public class SlimeGPU : MonoBehaviour
         Vector2 toMouse = new Vector2(0.0f, 0.0f);
         if (queenPOV)
         {
-            /*if (xCameraClamped || yCameraClamped)
-            {
-                //screen.height*zoom* queen.position.y) / height
-                float x = Screen.width * zoom * queen.position.x / width;
-                float y = Screen.height * zoom * queen.position.y / height;
-
-                toMouse = (getMousePos() - new Vector2(x, y));
-                Debug.Log("clamped: "+ new Vector2(x,y));
-            }//else if (xCameraClamped && !yCameraClamped)
-            else*/
-                toMouse = (getMousePos() - new Vector2(width / 2.0f, height / 2.0f)) / zoom;
+            toMouse = (getMousePos() - new Vector2(width / 2.0f, height / 2.0f)) / zoom;
         }
         else
             toMouse = (getMousePos() - queen.position);
-        if (toMouse.sqrMagnitude > queen.radius*queen.radius) //if mouse further away than the radius
+        if (toMouse.sqrMagnitude > 4) //queen.radius*queen.radius) //if mouse further away than the radius
             queen.position += toMouse.normalized * queen.speed * Time.deltaTime;
     }
 

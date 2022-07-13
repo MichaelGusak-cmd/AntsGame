@@ -134,6 +134,7 @@ float queenRadius;
 float3 queenColour;
 int queenEmit;
 float queenRespawnTimer;
+int winCon;
 
 
 [numthreads(16, 1, 1)]
@@ -147,6 +148,24 @@ void Update(uint3 id : SV_DispatchThreadID)
         
         if (agent.alive != 0) { //if (agent.alive is not false)
             float2 pos = agent.position;
+
+            if (winCon == 0) 
+            { //Warrior playstyle:
+                if (agent.species != 1) 
+                { //only affects enemy spawns
+                    //if distance between agent to queen pos < radius
+                    float2 sub = pos - queenPos;
+                    float distSquared = dot(sub, sub);
+                    if (distSquared < queenRadius * queenRadius) {
+                        agents[id.x].alive = 0;
+                        return;
+                    }
+                }
+                else if (agent.species == 1)
+                { //disable spawning ally agents from spawning
+                    return;
+                }
+            }
 
             uint random = hash(pos.y * width + pos.x + hash(id.x + time * 100000));
 
@@ -212,10 +231,6 @@ void Update(uint3 id : SV_DispatchThreadID)
                 agents[id.x].alive = 1;
                 agents[id.x].position = queenPos;
             }
-        }
-
-        if (id.x > queenSpawnLimit && id.x < maxSpawnLimit) {
-            agents[id.x].colour = float3(1, 1, 1);
         }
     }
 }
