@@ -43,6 +43,8 @@ RWStructuredBuffer<Pixel> pixels;
 RWStructuredBuffer<Agent> agents;
 uint numAgents;
 
+RWStructuredBuffer<int> data;
+
 RWTexture2D<float4> TrailMap;
 Texture2D<float4> InputTexture;
 
@@ -112,12 +114,17 @@ float sense(Agent agent, float sensorAngleOffset) {
     return sum;
 }
 
+void killed(int species) {
+    //not doing anything with species type yet
+    data[0]++;
+}
+
 #pragma kernel Init
 
 [numthreads(8, 8, 1)]
 void Init(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x < 0 || id.x > width || id.y < 0 || id.y > height) {
+    if (id.x < 0 || id.x > (uint)width || id.y < 0 || id.y > (uint)height) {
         return;
     }
 
@@ -158,6 +165,7 @@ void Update(uint3 id : SV_DispatchThreadID)
                     float distSquared = dot(sub, sub);
                     if (distSquared < queenRadius * queenRadius) {
                         agents[id.x].alive = 0;
+                        killed(agent.species);
                         return;
                     }
                 }
@@ -201,7 +209,7 @@ void Update(uint3 id : SV_DispatchThreadID)
                 agents[id.x].angle = scaleToRange01(random) * 2 * PI;
             }
 
-            int value = pixels[(int)newPos.x + width * (int)newPos.y].value;
+            uint value = pixels[(int)newPos.x + width * (int)newPos.y].value;
             if (value == 0) value = agent.emit;
             else if (value % agent.emit != 0) value *= agent.emit;
 
@@ -209,7 +217,7 @@ void Update(uint3 id : SV_DispatchThreadID)
                 int4 primes = int4(2, 3, 5, 7);
                 for (int i = 0; i < 4; i++) {
                     if (value % primes[i] == 0 && (value / primes[i]) % primes[i] == 0)
-                        value /= primes[i];
+                        value /= (uint)primes[i];
                 }
             }
 
@@ -225,7 +233,7 @@ void Update(uint3 id : SV_DispatchThreadID)
             //TrailMap[int2(newPos.x, newPos.y)] = float4(weightLeft*weightRight+0.2, weightLeft, weightRight, 1); //Sensing Colours
             //TrailMap[int2(newPos.x, newPos.y)] = float4(1, direction.x, direction.y, 1); //Direction movement Colours
         }
-        else if (id.x < queenSpawnLimit) { //(id.x < queenSpawnLimit && id.x < maxSpawnLimit)
+        else if (id.x < (uint)queenSpawnLimit) { //(id.x < queenSpawnLimit && id.x < maxSpawnLimit)
             agents[id.x].respawnTime = agents[id.x].respawnTime - deltaTime;
             if (agents[id.x].respawnTime <= 0) {
                 agents[id.x].alive = 1;
@@ -243,7 +251,7 @@ float diffuseSpeed;
 [numthreads(8, 8, 1)]
 void ProcessTrailMap(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x < 0 || id.x > width+1 || id.y < 0 || id.y > height+1) {
+    if (id.x < 0 || id.x > (uint)(width+1) || id.y < 0 || id.y > (uint)(height+1)) {
         return;
     }
 
@@ -300,7 +308,11 @@ float mouseSpeed;
 [numthreads(8, 8, 1)]
 void MousePressed(uint3 id : SV_DispatchThreadID) {
 
-    if (id.x < 0 || id.x > width || id.y < 0 || id.y > height || !mousePressed) {
+    if (id.x < 0 || 
+        id.x > (uint)width || 
+        id.y < 0 || 
+        id.y > (uint)height ||
+        !mousePressed) {
         return;
     }
     float4 originalValue = InputTexture[id.xy];

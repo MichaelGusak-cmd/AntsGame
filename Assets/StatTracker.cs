@@ -49,9 +49,13 @@ public struct Stats
 
         string output = "";
         for (int i = 0; i < numVals; i++)
-            output += formatString(str[i], values[i], true) + "\n";
+        {
+            string temp = formatString(str[i], values[i], true);
+            if (temp != "") temp += "\n";
+            output += temp;
+        }
 
-        return output;
+            return output;
     }
 
     public string formatString(string str, float val, bool nullString)

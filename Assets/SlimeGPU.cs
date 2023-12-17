@@ -93,6 +93,11 @@ public class SlimeGPU : MonoBehaviour
     private Pixel[] pixels;
     private ComputeBuffer pixelsBuffer;
 
+    private int dataCounter = 0; //do not modify, counts how often to call 'buffer.GetData()'
+    private int numData = 1;  // {numAgents killed}
+    private int[] dataArray;
+    private ComputeBuffer dataBuffer;
+
     //init bools
     private bool ready = false;
     private bool executed = false;
@@ -124,6 +129,7 @@ public class SlimeGPU : MonoBehaviour
             QueenSetup();
             AgentsSetup();
             PixelsSetup();
+            DataSetup();
 
             BufferSetup();
             ShaderSetup();
@@ -157,7 +163,7 @@ public class SlimeGPU : MonoBehaviour
         Stats s = new Stats(queenS.numVals);
         s.add(queenS,true);
         s.add(tempS, true);
-
+        
         bool[] tempBool = tracker.tempBool;
         for (int i = 0; i < s.numVals; i++)
         {
@@ -174,6 +180,15 @@ public class SlimeGPU : MonoBehaviour
 
 
         queen.winCon = statTracker.GetComponent<StatTracker>().winCon;
+    }
+
+    public void DataSetup()
+    {
+        dataArray = new int[numData];
+        for (int i = 0; i < numData; i++)
+        {
+            dataArray[i] = 0;
+        }
     }
 
     public void AgentsSetup()
@@ -252,6 +267,9 @@ public class SlimeGPU : MonoBehaviour
 
         pixelsBuffer = new ComputeBuffer(pixels.Length, pixelSizeInBytes);
         pixelsBuffer.SetData(pixels);
+
+        dataBuffer = new ComputeBuffer(dataArray.Length, sizeof(int));
+        dataBuffer.SetData(dataArray);
     }
 
     private void ShaderSetup()
@@ -296,6 +314,9 @@ public class SlimeGPU : MonoBehaviour
         computeShader.SetBuffer(updateIndex, "pixels", pixelsBuffer);
         computeShader.SetBuffer(processIndex, "pixels", pixelsBuffer);
         computeShader.SetBuffer(mouseIndex, "pixels", pixelsBuffer);
+
+        computeShader.SetBuffer(updateIndex, "data", dataBuffer);
+        computeShader.SetBuffer(processIndex, "data", dataBuffer);
 
         computeShader.SetBool("mousePressed", false); //init
 
@@ -375,25 +396,26 @@ public class SlimeGPU : MonoBehaviour
         else
             toMouse = (getMousePos() - queen.position);
         if (toMouse.sqrMagnitude > 4) //queen.radius*queen.radius) //if mouse further away than the radius
-            queen.position += toMouse.normalized * queen.speed * Time.deltaTime;
+            queen.position += toMouse * queen.speed * Time.deltaTime;
     }
 
     void RunSimulation()
     {
+
         //Setting the modifiable variables
         computeShader.SetFloat("deltaTime", Time.deltaTime);
         computeShader.SetFloat("time", Time.time);
 
-        computeShader.SetFloat("moveSpeed", moveSpeed);
-        computeShader.SetFloat("turnSpeed", turnSpeed);
+        computeShader.SetFloat("moveSpeed", moveSpeed); //move to constants?
+        computeShader.SetFloat("turnSpeed", turnSpeed); //move to constants?
 
-        computeShader.SetFloat("sensorAngleDegrees", sensorAngleDegrees);
-        computeShader.SetFloat("sensorOffsetDist", sensorOffsetDist);
-        computeShader.SetFloat("sensorAngleSpacing", sensorAngleSpacing);
-        computeShader.SetInt("sensorSize", sensorSize);
+        computeShader.SetFloat("sensorAngleDegrees", sensorAngleDegrees); //move to constants?
+        computeShader.SetFloat("sensorOffsetDist", sensorOffsetDist); //move to constants?
+        computeShader.SetFloat("sensorAngleSpacing", sensorAngleSpacing); //move to constants?
+        computeShader.SetInt("sensorSize", sensorSize); //move to constants?
 
-        computeShader.SetFloat("diffuseSpeed", diffuseSpeed);
-        computeShader.SetFloat("evaporateSpeed", evaporateSpeed);
+        computeShader.SetFloat("diffuseSpeed", diffuseSpeed); //move to constants?
+        computeShader.SetFloat("evaporateSpeed", evaporateSpeed); //move to constants?
 
         if (mousePressed)
         { //send mouse info on mouse click (once per click)
@@ -432,6 +454,16 @@ public class SlimeGPU : MonoBehaviour
         //Setting trailmap to renderTexture (to prevent tearing)
         Graphics.Blit(trailMap, renderTexture);
 
+        //Only calls "GetData" once every "numExecutions" times
+        int numExecutions = 1;
+        if (dataCounter == numExecutions-1)
+        {
+            dataCounter = 0;
+            dataBuffer.GetData(dataArray);
+            Debug.Log("Killed: " + dataArray[0] + " agents");
+        }
+        else dataCounter++;
+
         //only important for first loop, so renderer knows it can start drawing
         executed = true;
     }
@@ -467,5 +499,6 @@ public class SlimeGPU : MonoBehaviour
     {
         agentsBuffer.Dispose();
         pixelsBuffer.Dispose();
+        dataBuffer.Dispose();
     }
 }
